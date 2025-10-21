@@ -21,7 +21,7 @@ import (
 	"github.com/xelpool/xelishash"
 )
 
-// -------------------- Stratum 客户端 --------------------
+// -------------------- Stratum Client Side --------------------
 
 type StratumClient struct {
 	conn   net.Conn
@@ -61,7 +61,7 @@ func (s *StratumClient) ReadLine() (string, error) {
 	return strings.TrimSpace(line), nil
 }
 
-// -------------------- 挖矿统计 --------------------
+// -------------------- Mining Status --------------------
 
 type MiningStats struct {
 	hashCount   uint64
@@ -128,7 +128,7 @@ func RunMining(client *StratumClient, wallet, worker string) {
 	resp, _ := client.ReadLine()
 	fmt.Println("[*] Subscribe:", resp)
 
-	// 解析 subscribe 响应获取 extraNonce 和 publicKey
+	// log subscribe, extraNonce, publicKey
 	var subscribeResp struct {
 		ID     int           `json:"id"`
 		Result []interface{} `json:"result"`
@@ -164,7 +164,7 @@ func RunMining(client *StratumClient, wallet, worker string) {
 
 	stats := &MiningStats{startTime: time.Now()}
 
-	// 统计显示协程
+	// 
 	go func() {
 		ticker := time.NewTicker(2 * time.Second)
 		defer ticker.Stop()
@@ -173,7 +173,7 @@ func RunMining(client *StratumClient, wallet, worker string) {
 		}
 	}()
 
-	// 响应处理协程
+	// 
 	responseChan := make(chan string, 100)
 	go func() {
 		for {
@@ -188,9 +188,9 @@ func RunMining(client *StratumClient, wallet, worker string) {
 		}
 	}()
 
-	// 主循环处理消息
+	// 
 	for line := range responseChan {
-		// 处理提交响应
+		// 
 		if strings.Contains(line, `"id":4`) {
 			var submitResp struct {
 				ID     int         `json:"id"`
@@ -209,7 +209,7 @@ func RunMining(client *StratumClient, wallet, worker string) {
 			continue
 		}
 
-		// 难度变化
+		// difficulty
 		if strings.Contains(line, `"method":"mining.set_difficulty"`) {
 			var diffMsg struct {
 				Method string        `json:"method"`
@@ -226,7 +226,7 @@ func RunMining(client *StratumClient, wallet, worker string) {
 			continue
 		}
 
-		// 新任务
+		// New Job
 		if strings.Contains(line, `"method":"mining.notify"`) {
 			var notify struct {
 				Method string        `json:"method"`
@@ -243,7 +243,7 @@ func RunMining(client *StratumClient, wallet, worker string) {
 			
 			fmt.Printf("\n[*] New Job: %s\n", jobID)
 
-			// 解码
+			// Decode
 			timestampBytes, err := hex.DecodeString(timestampHex)
 			if err != nil {
 				fmt.Println("[!] Invalid timestamp")
@@ -256,7 +256,7 @@ func RunMining(client *StratumClient, wallet, worker string) {
 				continue
 			}
 
-			// 取消旧任务
+			// Terminate
 			if cancelMining != nil {
 				cancelMining()
 			}
@@ -264,7 +264,7 @@ func RunMining(client *StratumClient, wallet, worker string) {
 			ctx, cancel := context.WithCancel(context.Background())
 			cancelMining = cancel
 
-			// 更新当前任务
+			// 
 			jobMu.Lock()
 			currentJob = &MiningJob{
 				jobID:      jobID,
@@ -274,7 +274,7 @@ func RunMining(client *StratumClient, wallet, worker string) {
 			}
 			jobMu.Unlock()
 
-			// 启动多线程挖矿
+			// Multi Threads
 			for t := 0; t < numThreads; t++ {
 				go mineWorker(ctx, t, currentJob, session, client, worker, stats)
 			}
@@ -283,7 +283,7 @@ func RunMining(client *StratumClient, wallet, worker string) {
 }
 
 func mineWorker(ctx context.Context, threadID int, job *MiningJob, session *SessionInfo, client *StratumClient, worker string, stats *MiningStats) {
-	// 创建可复用的 scratchpad
+	// scratchpad
 	var scratchpad xelishash.ScratchPadV2
 	
 	nonce := make([]byte, 8)
@@ -308,7 +308,7 @@ func mineWorker(ctx context.Context, threadID int, job *MiningJob, session *Sess
 			nonceCounter++
 			binary.LittleEndian.PutUint64(nonce, (uint64(threadID)<<56)|nonceCounter)
 			
-			// 构造 MinerWork 结构 (112 bytes)
+			// Create MinerWork Struct (112 bytes)
 			// 0-31: Header work hash (32 bytes)
 			// 32-39: Timestamp (8 bytes)
 			// 40-47: Nonce (8 bytes)
@@ -321,12 +321,12 @@ func mineWorker(ctx context.Context, threadID int, job *MiningJob, session *Sess
 			copy(minerWork[48:80], session.extraNonce)
 			copy(minerWork[80:112], session.publicKey)
 			
-			// 计算 XelisHashV2
+			// XelisHashV2
 			hash := xelishash.XelisHashV2(minerWork, &scratchpad)
 			hashInt := new(big.Int).SetBytes(hash[:])
 			hashCount++
 
-			// 检查是否满足难度
+			// Check against difficulty
 			if hashInt.Cmp(job.target) <= 0 {
 				stats.AddShare()
 				
